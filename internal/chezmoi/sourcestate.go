@@ -1459,7 +1459,7 @@ func (s *SourceState) addTemplateData(sourceAbsPath AbsPath) error {
 	return nil
 }
 
-// addTemplateData adds all template data in the directory sourceAbsPath to s.
+// addTemplateDataDir adds all template data in the directory sourceAbsPath to s.
 func (s *SourceState) addTemplateDataDir(sourceAbsPath AbsPath, fileInfo fs.FileInfo) error {
 	walkFunc := func(dataAbsPath AbsPath, fileInfo fs.FileInfo, err error) error {
 		if dataAbsPath == sourceAbsPath {
@@ -1561,6 +1561,18 @@ func (s *SourceState) getExternalDataRaw(
 	external *External,
 	options *ReadOptions,
 ) ([]byte, error) {
+	// Handle file:// URLs by always reading from disk.
+	switch urlStruct, err := url.Parse(external.URL); {
+	case err != nil:
+		return nil, err
+	case urlStruct.Scheme == "file":
+		data, err := s.system.ReadFile(NewAbsPath(urlStruct.Path))
+		if err != nil {
+			return nil, err
+		}
+		return data, nil
+	}
+
 	var now time.Time
 	if options != nil && options.TimeNow != nil {
 		now = options.TimeNow()
@@ -2607,7 +2619,7 @@ func (s *SourceState) readExternalArchiveFile(
 	}), nil
 }
 
-// ReadExternalDir returns all source state entries in an external_ dir.
+// readExternalDir returns all source state entries in an external_ dir.
 func (s *SourceState) readExternalDir(
 	rootSourceAbsPath AbsPath,
 	rootSourceRelPath SourceRelPath,
