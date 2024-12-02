@@ -21,13 +21,13 @@ env:
   FIND_TYPOS_VERSION: 0.0.3 # https://github.com/twpayne/find-typos/tags
   GO_VERSION: 1.23.3 # https://go.dev/doc/devel/release
   GOFUMPT_VERSION: 0.7.0 # https://github.com/mvdan/gofumpt/releases
-  GOLANGCI_LINT_VERSION: 1.62.0 # https://github.com/golangci/golangci-lint/releases
+  GOLANGCI_LINT_VERSION: 1.62.2 # https://github.com/golangci/golangci-lint/releases
   GOLINES_VERSION: 0.12.2 # https://github.com/segmentio/golines/releases
-  GORELEASER_VERSION: 2.4.4 # https://github.com/goreleaser/goreleaser/releases
+  GORELEASER_VERSION: 2.4.8 # https://github.com/goreleaser/goreleaser/releases
   GOVERSIONINFO_VERSION: 1.4.1 # https://github.com/josephspurrier/goversioninfo/releases
   PYTHON_VERSION: '3.10' # https://www.python.org/downloads/
   RAGE_VERSION: 0.11.0 # https://github.com/str4d/rage/releases
-  UV_VERSION: 0.5.1 # https://github.com/astral-sh/uv/releases
+  UV_VERSION: 0.5.5 # https://github.com/astral-sh/uv/releases
 jobs:
   changes:
     runs-on: ubuntu-22.04
@@ -43,6 +43,7 @@ jobs:
         filters: |
           code:
           - '**/*.go'
+          - '.github/actions/setup-go/action.yml'
           - '.github/workflows/main.yml'
           - '.goreleaser.yaml'
           - 'Makefile'
@@ -69,10 +70,10 @@ jobs:
       with:
         go-version: ${{ env.GO_VERSION }}
         upload-cache: false
-    - uses: github/codeql-action/init@662472033e021d55d94146f66f6058822b0b39fd
+    - uses: github/codeql-action/init@f09c1c0a94de965c15400f5634aa42fac8fb8f88
       with:
         languages: go
-    - uses: github/codeql-action/analyze@662472033e021d55d94146f66f6058822b0b39fd
+    - uses: github/codeql-action/analyze@f09c1c0a94de965c15400f5634aa42fac8fb8f88
   misspell:
     runs-on: ubuntu-22.04
     permissions:
@@ -329,7 +330,7 @@ jobs:
       with:
         cache-prefix: website-go
         go-version: ${{ env.GO_VERSION }}
-    - uses: astral-sh/setup-uv@2e657c127d5b1635d5a8e3fa40e0ac50a5bf6992
+    - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a
       with:
         enable-cache: true
         version: ${{ env.UV_VERSION }}
@@ -346,7 +347,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        test-index: [0, 1]
+        test-index: [0, 1, 2]
     needs: changes
     if: github.event_name == 'push' || needs.changes.outputs.code == 'true'
     runs-on: windows-2022
@@ -369,9 +370,11 @@ jobs:
       run: |
         if (${{ matrix.test-index }} -eq 0) {
           go test ./... -short -race
-          go test ./internal/cmd -run=TestScript -filter='^[0-9a-hA-h]' -race
+          go test ./internal/cmd -run=TestScript -filter='^[0-9a-cA-C]' -race
+        } elseif (${{ matrix.test-index }} -eq 1) {
+          go test ./internal/cmd -run=TestScript -filter='^[d-lD-L]' -race
         } else {
-          go test ./internal/cmd -run=TestScript -filter='^[i-zI-Z]' -race
+          go test ./internal/cmd -run=TestScript -filter='^[m-zM-Z]' -race
         }
   check:
     runs-on: ubuntu-22.04
@@ -510,7 +513,7 @@ jobs:
       with:
         cache-prefix: website-go
         go-version: ${{ env.GO_VERSION }}
-    - uses: astral-sh/setup-uv@2e657c127d5b1635d5a8e3fa40e0ac50a5bf6992
+    - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a
       with:
         enable-cache: true
         version: ${{ env.UV_VERSION }}
