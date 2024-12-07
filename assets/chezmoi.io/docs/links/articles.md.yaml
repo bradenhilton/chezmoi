@@ -462,3 +462,13 @@ articles:
   version: 2.53.1
   title: 'dotfiles management: chezmoi'
   url: https://blg.gkr.one/20241107-chezmoi/
+- date: '2024-11-19'
+  version: 2.54.0
+  lang: AR
+  title: شيموا (chezmoi) ببساطة
+  url: https://github.com/mohamedhany01/chezmoi-tutorial-arabic
+- date: '2024-12-02'
+  version: 2.55.0
+  lang: JP
+  title: 'chezmoiを使ったローカル環境爆速構築'
+  url: https://qiita.com/cb400sp2/items/c04ec9472455d9022532
