@@ -5,6 +5,7 @@ package chezmoi
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -108,6 +109,7 @@ type External struct {
 	RefreshPeriod   Duration          `json:"refreshPeriod"   toml:"refreshPeriod"   yaml:"refreshPeriod"`
 	StripComponents int               `json:"stripComponents" toml:"stripComponents" yaml:"stripComponents"`
 	URL             string            `json:"url"             toml:"url"             yaml:"url"`
+	URLs            []string          `json:"urls"            toml:"urls"            yaml:"urls"`
 	sourceAbsPath   AbsPath
 }
 
@@ -1354,8 +1356,19 @@ func (s *SourceState) addExternal(sourceAbsPath, parentAbsPath AbsPath) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	for path, external := range externals {
-		if strings.HasPrefix(path, "/") || filepath.IsAbs(path) {
+		switch {
+		case path == "":
+			return fmt.Errorf("%s: empty path", sourceAbsPath)
+		case strings.HasPrefix(path, "/") || filepath.IsAbs(path):
 			return fmt.Errorf("%s: %s: path is not relative", sourceAbsPath, path)
+		}
+		switch relPath, err := filepath.Rel(".", path); {
+		case err != nil:
+			return fmt.Errorf("%s: %s: %w", sourceAbsPath, path, err)
+		case relPath == ".":
+			return fmt.Errorf("%s: %s: empty relative path", sourceAbsPath, path)
+		case relPath == "..", strings.HasPrefix(relPath, "../"):
+			return fmt.Errorf("%s: %s: relative path in parent", sourceAbsPath, path)
 		}
 		targetRelPath := parentTargetSourceRelPath.JoinString(path)
 		external.sourceAbsPath = sourceAbsPath
@@ -1459,7 +1472,7 @@ func (s *SourceState) addTemplateData(sourceAbsPath AbsPath) error {
 	return nil
 }
 
-// addTemplateData adds all template data in the directory sourceAbsPath to s.
+// addTemplateDataDir adds all template data in the directory sourceAbsPath to s.
 func (s *SourceState) addTemplateDataDir(sourceAbsPath AbsPath, fileInfo fs.FileInfo) error {
 	walkFunc := func(dataAbsPath AbsPath, fileInfo fs.FileInfo, err error) error {
 		if dataAbsPath == sourceAbsPath {
@@ -1558,9 +1571,22 @@ func (s *SourceState) executeTemplate(templateAbsPath AbsPath) ([]byte, error) {
 func (s *SourceState) getExternalDataRaw(
 	ctx context.Context,
 	externalRelPath RelPath,
-	external *External,
+	urlStr string,
+	refreshPeriod Duration,
 	options *ReadOptions,
 ) ([]byte, error) {
+	// Handle file:// URLs by always reading from disk.
+	switch urlStruct, err := url.Parse(urlStr); {
+	case err != nil:
+		return nil, err
+	case urlStruct.Scheme == "file":
+		data, err := s.system.ReadFile(NewAbsPath(urlStruct.Path))
+		if err != nil {
+			return nil, err
+		}
+		return data, nil
+	}
+
 	var now time.Time
 	if options != nil && options.TimeNow != nil {
 		now = options.TimeNow()
@@ -1573,7 +1599,7 @@ func (s *SourceState) getExternalDataRaw(
 	if options != nil {
 		refreshExternals = options.RefreshExternals
 	}
-	urlSHA256 := sha256.Sum256([]byte(external.URL))
+	urlSHA256 := sha256.Sum256([]byte(urlStr))
 	cacheKey := hex.EncodeToString(urlSHA256[:])
 	cachedDataAbsPath := s.cacheDirAbsPath.JoinString("external", cacheKey)
 	switch refreshExternals {
@@ -1582,7 +1608,7 @@ func (s *SourceState) getExternalDataRaw(
 	case RefreshExternalsAuto:
 		// Use the cache, if available and within the refresh period.
 		if fileInfo, err := s.baseSystem.Stat(cachedDataAbsPath); err == nil {
-			if external.RefreshPeriod == 0 || fileInfo.ModTime().Add(time.Duration(external.RefreshPeriod)).After(now) {
+			if refreshPeriod == 0 || fileInfo.ModTime().Add(time.Duration(refreshPeriod)).After(now) {
 				if data, err := s.baseSystem.ReadFile(cachedDataAbsPath); err == nil {
 					return data, nil
 				}
@@ -1596,7 +1622,7 @@ func (s *SourceState) getExternalDataRaw(
 		}
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, external.URL, http.NoBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, http.NoBody)
 	if err != nil {
 		return nil, err
 	}
@@ -1615,7 +1641,7 @@ func (s *SourceState) getExternalDataRaw(
 		return nil, err
 	}
 	if resp.StatusCode < http.StatusOK || http.StatusMultipleChoices <= resp.StatusCode {
-		return nil, fmt.Errorf("%s: %s: %s", externalRelPath, external.URL, resp.Status)
+		return nil, fmt.Errorf("%s: %s: %s", externalRelPath, urlStr, resp.Status)
 	}
 
 	if err := MkdirAll(s.baseSystem, cachedDataAbsPath.Dir(), 0o700); err != nil {
@@ -1631,17 +1657,47 @@ func (s *SourceState) getExternalDataRaw(
 	return data, nil
 }
 
+// getExternalDataAndURL iterates over external.URL and external.URLs, returning
+// the first data that is downloaded successfully and the URL it was downloaded
+// from.
+func (s *SourceState) getExternalDataAndURL(
+	ctx context.Context,
+	externalRelPath RelPath,
+	external *External,
+	options *ReadOptions,
+) ([]byte, string, error) {
+	var firstURLStr string
+	var firstErr error
+	for _, urlStr := range append([]string{external.URL}, external.URLs...) {
+		if urlStr == "" {
+			continue
+		}
+		data, err := s.getExternalDataRaw(ctx, externalRelPath, urlStr, external.RefreshPeriod, options)
+		if err == nil {
+			return data, urlStr, nil
+		}
+		if firstURLStr == "" {
+			firstURLStr = urlStr
+			firstErr = err
+		}
+	}
+	if firstURLStr == "" {
+		return nil, "", fmt.Errorf("%s: no URL", externalRelPath)
+	}
+	return nil, firstURLStr, firstErr
+}
+
 // getExternalData reads the external data for externalRelPath from
-// external.URL.
+// external.URL or external.URLs, returning the data and URL.
 func (s *SourceState) getExternalData(
 	ctx context.Context,
 	externalRelPath RelPath,
 	external *External,
 	options *ReadOptions,
-) ([]byte, error) {
-	data, err := s.getExternalDataRaw(ctx, externalRelPath, external, options)
+) ([]byte, string, error) {
+	data, urlStr, err := s.getExternalDataAndURL(ctx, externalRelPath, external, options)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	var errs []error
@@ -1698,19 +1754,19 @@ func (s *SourceState) getExternalData(
 	}
 
 	if len(errs) != 0 {
-		return nil, fmt.Errorf("%s: %w", externalRelPath, errors.Join(errs...))
+		return nil, urlStr, fmt.Errorf("%s: %w", externalRelPath, errors.Join(errs...))
 	}
 
 	if external.Encrypted {
 		data, err = s.encryption.Decrypt(data)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %s: %w", externalRelPath, external.URL, err)
+			return nil, urlStr, fmt.Errorf("%s: %s: %w", externalRelPath, urlStr, err)
 		}
 	}
 
 	data, err = decompress(external.Decompress, data)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", externalRelPath, err)
+		return nil, urlStr, fmt.Errorf("%s: %w", externalRelPath, err)
 	}
 
 	if external.Filter.Command != "" {
@@ -1719,11 +1775,11 @@ func (s *SourceState) getExternalData(
 		cmd.Stderr = os.Stderr
 		data, err = chezmoilog.LogCmdOutput(s.logger, cmd)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %s: %w", externalRelPath, external.URL, err)
+			return nil, urlStr, fmt.Errorf("%s: %s: %w", externalRelPath, urlStr, err)
 		}
 	}
 
-	return data, nil
+	return data, urlStr, nil
 }
 
 // newSourceStateDir returns a new SourceStateDir.
@@ -2300,7 +2356,7 @@ func (s *SourceState) readExternalArchive(
 	external *External,
 	options *ReadOptions,
 ) (map[RelPath][]SourceStateEntry, error) {
-	data, format, err := s.readExternalArchiveData(ctx, externalRelPath, external, options)
+	data, urlStr, format, err := s.readExternalArchiveData(ctx, externalRelPath, external, options)
 	if err != nil {
 		return nil, err
 	}
@@ -2458,7 +2514,7 @@ func (s *SourceState) readExternalArchive(
 		sourceStateEntries[targetRelPath] = append(sourceStateEntries[targetRelPath], sourceStateEntry)
 		return nil
 	}); err != nil {
-		return nil, fmt.Errorf("%s: %s: %w", externalRelPath, external.URL, err)
+		return nil, fmt.Errorf("%s: %s: %w", externalRelPath, urlStr, err)
 	}
 
 	return s.populateImplicitParentDirs(externalRelPath, external, sourceStateEntries), nil
@@ -2471,16 +2527,16 @@ func (s *SourceState) readExternalArchiveData(
 	externalRelPath RelPath,
 	external *External,
 	options *ReadOptions,
-) ([]byte, ArchiveFormat, error) {
-	data, err := s.getExternalData(ctx, externalRelPath, external, options)
+) ([]byte, string, ArchiveFormat, error) {
+	data, urlStr, err := s.getExternalData(ctx, externalRelPath, external, options)
 	if err != nil {
-		return nil, ArchiveFormatUnknown, err
+		return nil, "", ArchiveFormatUnknown, err
 	}
 
-	externalURL, err := url.Parse(external.URL)
+	externalURL, err := url.Parse(urlStr)
 	if err != nil {
-		err := fmt.Errorf("%s: %s: %w", externalRelPath, external.URL, err)
-		return nil, ArchiveFormatUnknown, err
+		err := fmt.Errorf("%s: %s: %w", externalRelPath, urlStr, err)
+		return nil, urlStr, ArchiveFormatUnknown, err
 	}
 	urlPath := externalURL.Path
 	if external.Encrypted {
@@ -2492,7 +2548,7 @@ func (s *SourceState) readExternalArchiveData(
 		format = GuessArchiveFormat(urlPath, data)
 	}
 
-	return data, format, nil
+	return data, urlStr, format, nil
 }
 
 // readExternalArchiveFile reads a file from an external archive and returns its
@@ -2508,7 +2564,7 @@ func (s *SourceState) readExternalArchiveFile(
 		return nil, fmt.Errorf("%s: missing path", externalRelPath)
 	}
 
-	data, format, err := s.readExternalArchiveData(ctx, externalRelPath, external, options)
+	data, urlStr, format, err := s.readExternalArchiveData(ctx, externalRelPath, external, options)
 	if err != nil {
 		return nil, err
 	}
@@ -2599,7 +2655,7 @@ func (s *SourceState) readExternalArchiveFile(
 		return nil, err
 	}
 	if sourceStateEntry == nil {
-		return nil, fmt.Errorf("%s: path not found in %s", external.ArchivePath, external.URL)
+		return nil, fmt.Errorf("%s: path not found in %s", external.ArchivePath, urlStr)
 	}
 
 	return s.populateImplicitParentDirs(externalRelPath, external, map[RelPath][]SourceStateEntry{
@@ -2607,7 +2663,7 @@ func (s *SourceState) readExternalArchiveFile(
 	}), nil
 }
 
-// ReadExternalDir returns all source state entries in an external_ dir.
+// readExternalDir returns all source state entries in an external_ dir.
 func (s *SourceState) readExternalDir(
 	rootSourceAbsPath AbsPath,
 	rootSourceRelPath SourceRelPath,
@@ -2716,7 +2772,8 @@ func (s *SourceState) readExternalFile(
 	options *ReadOptions,
 ) (map[RelPath][]SourceStateEntry, error) {
 	contentsFunc := sync.OnceValues(func() ([]byte, error) {
-		return s.getExternalData(ctx, externalRelPath, external, options)
+		data, _, err := s.getExternalData(ctx, externalRelPath, external, options)
+		return data, err
 	})
 	fileAttr := FileAttr{
 		Empty:      true,
@@ -2868,7 +2925,8 @@ func (e *External) Path() AbsPath {
 }
 
 func (e *External) OriginString() string {
-	return e.URL + " defined in " + e.sourceAbsPath.String()
+	urlStr := cmp.Or(append([]string{e.URL}, e.URLs...)...)
+	return urlStr + " defined in " + e.sourceAbsPath.String()
 }
 
 // canonicalSourceStateEntry returns the canonical SourceStateEntry for the
