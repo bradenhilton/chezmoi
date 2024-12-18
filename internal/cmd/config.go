@@ -107,6 +107,7 @@ type ConfigFile struct {
 	DestDirAbsPath         chezmoi.AbsPath                `json:"destDir"         mapstructure:"destDir"         yaml:"destDir"`
 	GitHub                 gitHubConfig                   `json:"gitHub"          mapstructure:"gitHub"          yaml:"gitHub"`
 	Hooks                  map[string]hookConfig          `json:"hooks"           mapstructure:"hooks"           yaml:"hooks"`
+	Interactive            bool                           `json:"interactive"     mapstructure:"interactive"     yaml:"interactive"`
 	Interpreters           map[string]chezmoi.Interpreter `json:"interpreters"    mapstructure:"interpreters"    yaml:"interpreters"`
 	Mode                   chezmoi.Mode                   `json:"mode"            mapstructure:"mode"            yaml:"mode"`
 	Pager                  string                         `json:"pager"           mapstructure:"pager"           yaml:"pager"`
@@ -177,7 +178,6 @@ type Config struct {
 	dryRun           bool
 	force            bool
 	homeDir          string
-	interactive      bool
 	keepGoing        bool
 	noPager          bool
 	noTTY            bool
@@ -269,6 +269,7 @@ type templateData struct {
 	commandDir        chezmoi.AbsPath
 	config            map[string]any
 	configFile        chezmoi.AbsPath
+	destDir           chezmoi.AbsPath
 	executable        chezmoi.AbsPath
 	fqdnHostname      string
 	gid               string
@@ -1029,7 +1030,7 @@ func (c *Config) defaultPreApplyFunc(
 		return nil
 	}
 
-	if c.interactive {
+	if c.Interactive {
 		prompt := fmt.Sprintf("Apply %s", targetRelPath)
 		var choices []string
 		actualContents := actualEntryState.Contents()
@@ -1052,7 +1053,7 @@ func (c *Config) defaultPreApplyFunc(
 			case choice == "no":
 				return fs.SkipDir
 			case choice == "all":
-				c.interactive = false
+				c.Interactive = false
 				return nil
 			case choice == "quit":
 				return chezmoi.ExitCodeError(0)
@@ -1227,14 +1228,14 @@ func (c *Config) diffFile(
 	}
 	if fromMode.IsRegular() {
 		var err error
-		fromData, err = c.TextConv.convert(path.String(), fromData)
+		fromData, _, err = c.TextConv.convert(path.String(), fromData)
 		if err != nil {
 			return err
 		}
 	}
 	if toMode.IsRegular() {
 		var err error
-		toData, err = c.TextConv.convert(path.String(), toData)
+		toData, _, err = c.TextConv.convert(path.String(), toData)
 		if err != nil {
 			return err
 		}
@@ -1535,6 +1536,7 @@ func (c *Config) getTemplateDataMap(cmd *cobra.Command) map[string]any {
 			"commandDir":        templateData.commandDir.String(),
 			"config":            templateData.config,
 			"configFile":        templateData.configFile.String(),
+			"destDir":           templateData.destDir,
 			"executable":        templateData.executable.String(),
 			"fqdnHostname":      templateData.fqdnHostname,
 			"gid":               templateData.gid,
@@ -1686,6 +1688,7 @@ func (c *Config) newRootCmd() (*cobra.Command, error) {
 	persistentFlags.Var(&c.CacheDirAbsPath, "cache", "Set cache directory")
 	persistentFlags.Var(&c.Color, "color", "Colorize output")
 	persistentFlags.VarP(&c.DestDirAbsPath, "destination", "D", "Set destination directory")
+	persistentFlags.BoolVar(&c.Interactive, "interactive", c.Interactive, "Prompt for all changes")
 	persistentFlags.Var(&c.Mode, "mode", "Mode")
 	persistentFlags.Var(&c.PersistentStateAbsPath, "persistent-state", "Set persistent state file")
 	persistentFlags.Var(&c.Progress, "progress", "Display progress bars")
@@ -1702,7 +1705,6 @@ func (c *Config) newRootCmd() (*cobra.Command, error) {
 	persistentFlags.BoolVar(&c.debug, "debug", c.debug, "Include debug information in output")
 	persistentFlags.BoolVarP(&c.dryRun, "dry-run", "n", c.dryRun, "Do not make any modifications to the destination directory")
 	persistentFlags.BoolVar(&c.force, "force", c.force, "Make all changes without prompting")
-	persistentFlags.BoolVar(&c.interactive, "interactive", c.interactive, "Prompt for all changes")
 	persistentFlags.BoolVarP(&c.keepGoing, "keep-going", "k", c.keepGoing, "Keep going as far as possible after an error")
 	persistentFlags.BoolVar(&c.noPager, "no-pager", c.noPager, "Do not use the pager")
 	persistentFlags.BoolVar(&c.noTTY, "no-tty", c.noTTY, "Do not attempt to get a TTY for prompts")
@@ -1815,6 +1817,7 @@ func (c *Config) newDiffSystem(s chezmoi.System, w io.Writer, dirAbsPath chezmoi
 		Filter:         chezmoi.NewEntryTypeFilter(c.Diff.include.Bits(), c.Diff.Exclude.Bits()),
 		Reverse:        c.Diff.Reverse,
 		ScriptContents: c.Diff.ScriptContents,
+		TextConvFunc:   c.TextConv.convert,
 	}
 	return chezmoi.NewExternalDiffSystem(s, c.Diff.Command, c.Diff.Args, c.DestDirAbsPath, options)
 }
@@ -1865,6 +1868,7 @@ func (c *Config) newSourceState(
 		chezmoi.WithTemplateOptions(c.Template.Options),
 		chezmoi.WithUmask(c.Umask),
 		chezmoi.WithVersion(c.version),
+		chezmoi.WithWarnFunc(c.errorf),
 	}, options...)...)
 
 	if err := sourceState.Read(ctx, &chezmoi.ReadOptions{
@@ -2047,7 +2051,7 @@ func (c *Config) persistentPreRunRootE(cmd *cobra.Command, args []string) error 
 		}
 	}
 
-	if c.force && c.interactive {
+	if c.force && c.Interactive {
 		return errors.New("the --force and --interactive flags are mutually exclusive")
 	}
 
@@ -2260,6 +2264,7 @@ func (c *Config) persistentPreRunRootE(cmd *cobra.Command, args []string) error 
 		"COMMAND":       templateData.command,
 		"COMMAND_DIR":   templateData.commandDir.String(),
 		"CONFIG_FILE":   templateData.configFile.String(),
+		"DEST_DIR":      templateData.destDir.String(),
 		"EXECUTABLE":    templateData.executable.String(),
 		"FQDN_HOSTNAME": templateData.fqdnHostname,
 		"GID":           templateData.gid,
@@ -2426,6 +2431,7 @@ func (c *Config) newTemplateData(cmd *cobra.Command) *templateData {
 		commandDir:        c.commandDirAbsPath,
 		config:            c.ConfigFile.toMap(),
 		configFile:        c.getConfigFileAbsPath(),
+		destDir:           c.DestDirAbsPath,
 		executable:        chezmoi.NewAbsPath(executable),
 		fqdnHostname:      fqdnHostname,
 		gid:               gid,
@@ -2494,6 +2500,11 @@ func (c *Config) runEditor(args []string) error {
 	editor, editorArgs, err := c.editor(args)
 	if err != nil {
 		return err
+	}
+	if c.Edit.Hardlink && filepath.Base(editor) == "hx" {
+		c.errorf(
+			"warning: helix editor cannot edit hardlinks, see https://github.com/helix-editor/helix/issues/11279 and https://github.com/twpayne/chezmoi/issues/3971",
+		)
 	}
 	start := time.Now()
 	err = c.run(chezmoi.EmptyAbsPath, editor, editorArgs)
