@@ -11,8 +11,8 @@ from pathlib import Path, PurePosixPath
 from mkdocs import utils
 from mkdocs.config.defaults import MkDocsConfig
 from mkdocs.structure.files import Files
+from mkdocs.structure.pages import Page
 from ruamel.yaml import YAML
-from ruamel.yaml.representer import RepresenterError as YAMLRepresenterError
 
 non_website_paths = [
     'docs.go',
@@ -85,9 +85,11 @@ def on_post_build(config: MkDocsConfig, **kwargs) -> None:
     )
 
 
-def on_page_markdown(markdown: str, **kwargs) -> str:
-    # matches TOML fences surrounded by a HTML comment-style directive,
-    # captures the initial indentation, optional title filename and TOML text
+def on_page_markdown(markdown: str, page: Page, **kwargs) -> str:
+    # Matches TOML fences surrounded by a HTML comment-style directive,
+    # captures the initial indentation, optional filename title and TOML text.
+    # We allow capturing *.toml.tmpl filename titles but do not support
+    # converting examples containing any template syntax.
     example_pattern = re.compile(
         r"""
         ^([ \t]*)
@@ -104,59 +106,60 @@ def on_page_markdown(markdown: str, **kwargs) -> str:
         re.MULTILINE | re.DOTALL | re.VERBOSE,
     )
 
-    def rename_with_format(filename_path: PurePosixPath, fmt: str) -> str:
-        name = str(filename_path)
+    def rename_with_format(filename: str, fmt: str) -> str:
         for suffix in ('.toml.tmpl', '.toml'):
-            if name.endswith(suffix):
-                return name.removesuffix(suffix) + suffix.replace('.toml', f'.{fmt}')
-        return name
+            if filename.endswith(suffix):
+                return filename.removesuffix(suffix) + suffix.replace(
+                    '.toml', f'.{fmt}'
+                )
+        return filename
 
-    def build_code_fence(
-        text: str, fmt: str, filename_path: PurePosixPath | None = None
-    ) -> str:
-        title = rename_with_format(filename_path, fmt) if filename_path else None
-
+    def build_code_fence(text: str, fmt: str, filename: str | None = None) -> str:
+        title = rename_with_format(filename, fmt) if filename else None
         return '\n'.join(
             (f"""```{fmt}{f' title="{title}"' if title else ''}""", text.strip(), '```')
         )
 
     def build_example_tabs(toml_text: str, filename: str | None = None) -> str:
-        filename_path = PurePosixPath(filename) if filename else None
-
-        data = tomllib.loads(textwrap.dedent(toml_text).strip())
+        data = tomllib.loads(toml_text)
 
         yaml_obj = YAML()
         yaml_obj.line_break = '\n'
         yaml_obj.width = 1024
         with StringIO() as yaml_stream:
             yaml_obj.dump(data, yaml_stream)
-            yaml_text = yaml_stream.getvalue().strip()
+            yaml_text = yaml_stream.getvalue()
 
         json_text = json.dumps(data, indent=4)
 
-        blocks = []
-        for fence, text in (
-            ('toml', toml_text.strip()),
+        tabs = []
+        for fmt, text in (
+            ('toml', toml_text),
             ('yaml', yaml_text),
             ('json', json_text),
         ):
-            block = textwrap.indent(
-                build_code_fence(text, fence, filename_path), ' ' * 4
-            )
-            blocks.append(f'=== "{fence.upper()}"\n\n{block}')
+            # Indent each fence by 4 spaces in each tab, e.g.:
+            # === "TOML"
+            #
+            #     ```toml
+            fence = textwrap.indent(build_code_fence(text, fmt, filename), ' ' * 4)
+            tabs.append(f'=== "{fmt.upper()}"\n\n{fence}')
 
-        return '\n\n'.join(blocks)
+        return '\n\n'.join(tabs)
 
     def replace(match: re.Match) -> str | None:
         indent = match.group(1)
         filename = match.group(2)
-        toml_text = match.group(3)
+        toml_text = textwrap.dedent(indent + match.group(3)).strip()
 
-        try:
-            examples = build_example_tabs(toml_text, filename)
-        except tomllib.TOMLDecodeError, YAMLRepresenterError, ValueError, TypeError:
-            return match.group(0)
+        examples = build_example_tabs(toml_text, filename)
 
         return textwrap.indent(examples, indent)
 
-    return example_pattern.sub(replace, markdown)
+    new_md = example_pattern.sub(replace, markdown)
+    if new_md != markdown:
+        new_file = Path('examples_preview') / page.file.src_uri
+        new_file.parent.mkdir(parents=True, exist_ok=True)
+        with new_file.open('w') as fp:
+            fp.write(new_md)
+    return new_md

@@ -97,13 +97,11 @@ your repo. This feature is disabled by default. To enable it, add the following
 to your config file:
 
 <!-- example-formats -->
-
 ```toml title="~/.config/chezmoi/chezmoi.toml"
 [git]
     autoCommit = true
     autoPush = true
 ```
-
 <!-- /example-formats -->
 
 Whenever a change is made to your source directory, chezmoi will commit the
@@ -119,13 +117,11 @@ configuration variable. For example, to have chezmoi prompt you for a commit
 message each time, use:
 
 <!-- example-formats -->
-
 ```toml title="~/.config/chezmoi/chezmoi.toml"
 [git]
     autoCommit = true
     commitMessageTemplate = "{{ promptString \"Commit message\" }}"
 ```
-
 <!-- /example-formats -->
 
 If your commit message is longer than fits in a string then you can set
@@ -133,13 +129,11 @@ If your commit message is longer than fits in a string then you can set
 relative to the source directory, for example:
 
 <!-- example-formats -->
-
 ```toml title="~/.config/chezmoi/chezmoi.toml"
 [git]
     autoCommit = true
     commitMessageTemplateFile = ".commit_message.tmpl"
 ```
-
 <!-- /example-formats -->
 
 Be careful when using `autoPush`. If your dotfiles repo is public and you

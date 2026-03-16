@@ -11,10 +11,12 @@ resource.
 
 Alternatively, use alternate [authentication options][auth].
 
+<!-- example-formats -->
 ```toml title="~/.config/chezmoi/chezmoi.toml"
 [azureKeyVault]
-  defaultVault = "contoso-vault2"
+    defaultVault = "contoso-vault2"
 ```
+<!-- /example-formats -->
 
 A secret value can be retrieved with the `azureKeyVault` template function.
 
@@ -33,13 +35,14 @@ exampleSecret = {{ azureKeyVault "my-secret-name" "contoso-vault2" }}
 It is also possible to define an alias in the configuration file for an
 additional vault.
 
+<!-- example-formats -->
 ```toml title="~/.config/chezmoi/chezmoi.toml"
 [data]
-  vault42 = "contoso-vault42"
-
+    vault42 = "contoso-vault42"
 [azureKeyVault]
-  defaultVault = "contoso-vault2"
+    defaultVault = "contoso-vault2"
 ```
+<!-- /example-formats -->
 
 Retrieve the secret `my-secret-name` from the vault named `contoso-vault42`
 through the alias.
