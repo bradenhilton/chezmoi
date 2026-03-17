@@ -6,7 +6,7 @@ templates. See also [`.chezmoidata/`][data-dir].
 
 !!! example
 
-    If `.chezmoidata.toml` contains the following:
+    If `.chezmoidata.$FORMAT` contains the following:
 
     <!-- example-formats -->
     ```toml title="~/.local/share/chezmoi/.chezmoidata.toml"

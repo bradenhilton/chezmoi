@@ -29,9 +29,9 @@ can then be used in templates. See also [`.chezmoidata.$FORMAT`][data-format].
     z.x = 1
     ```
 
-    ```toml title="dot_config/.chezmoidata/gamma.yaml"
+    ```yaml title="dot_config/.chezmoidata/gamma.yaml"
     z:
-        y: 2
+      y: 2
     ```
 
     The output of `chezmoi data` will include the following merged `z`

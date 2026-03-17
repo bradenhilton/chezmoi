@@ -2,7 +2,7 @@
 
 chezmoi includes support for [Azure Key Vault secrets][azure-key].
 
-A default Azure Key Vault name can be set in `~/.config/chezmoi/chezmoi.toml`
+A default Azure Key Vault name can be set in `~/.config/chezmoi/chezmoi.$FORMAT`
 with `azureKeyVault.defaultVault`.
 
 Ensure [Azure CLI][cli] is installed and [log in][login]. The logged in user
