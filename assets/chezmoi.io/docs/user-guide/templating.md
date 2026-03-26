@@ -366,7 +366,7 @@ them in the file `~/.config/chezmoi/chezmoi.$FORMAT`:
     fontsize = 12
     font = "DejaVu Sans Mono"
 ```
-<!-- example-formats -->
+<!-- /example-formats -->
 
 Use the variables in `~/.local/share/chezmoi/.chezmoitemplates/alacritty`:
 

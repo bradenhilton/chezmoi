@@ -160,7 +160,7 @@ You can extract a single file from an archive using the `archive-file` type in
 {{ $ageVersion := "1.1.1" -}}
 {
     ".local/bin/age": {
-        "type": ""archive-file"",
+        "type": "archive-file",
         "url": "https://github.com/FiloSottile/age/releases/download/v{{ $ageVersion }}/age-v{{ $ageVersion }}-{{ .chezmoi.os }}-{{ .chezmoi.arch }}.tar.gz",
         "path": "age/age"
     }
